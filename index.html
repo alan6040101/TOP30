@@ -1,0 +1,1246 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>台股成交值 TOP 30 即時榜</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e1a;
+    --bg2: #111827;
+    --bg3: #1a2235;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.14);
+    --text: #e8eaf0;
+    --text2: #8892a4;
+    --text3: #4a5568;
+    --accent: #3b82f6;
+    --accent2: #1d4ed8;
+    --green: #10b981;
+    --red: #ef4444;
+    --yellow: #f59e0b;
+    --new-badge: #7c3aed;
+    --gold: #f59e0b;
+    --silver: #94a3b8;
+    --bronze: #cd7c3a;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    font-family: 'Noto Sans TC', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.6;
+  }
+
+  /* Header */
+  .site-header {
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(12px);
+  }
+
+  .header-inner {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 60px;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .logo-icon {
+    width: 32px;
+    height: 32px;
+    background: var(--accent);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+  }
+
+  .logo-text {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+  }
+
+  .logo-sub {
+    font-size: 11px;
+    color: var(--text2);
+    font-weight: 300;
+    letter-spacing: 0.5px;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .market-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text2);
+  }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text3);
+  }
+
+  .status-dot.open {
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .refresh-btn {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border2);
+    background: transparent;
+    color: var(--text2);
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .refresh-btn:hover {
+    background: var(--bg3);
+    color: var(--text);
+  }
+
+  .refresh-btn.spinning svg {
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  /* Nav tabs */
+  .nav-tabs {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 24px;
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .nav-tab {
+    padding: 12px 20px;
+    font-size: 13px;
+    color: var(--text2);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    white-space: nowrap;
+    background: none;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+    font-family: inherit;
+  }
+
+  .nav-tab:hover { color: var(--text); }
+  .nav-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  /* Main layout */
+  .main {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+
+  /* Stats bar */
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .stat-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+  }
+
+  .stat-label {
+    font-size: 11px;
+    color: var(--text2);
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+  }
+
+  .stat-value {
+    font-size: 20px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .stat-sub {
+    font-size: 11px;
+    color: var(--text2);
+    margin-top: 2px;
+  }
+
+  .stat-value.up { color: var(--red); }
+  .stat-value.down { color: var(--green); }
+
+  /* Section header */
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  .section-title {
+    font-size: 15px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .section-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    background: rgba(59,130,246,0.15);
+    color: var(--accent);
+    border: 1px solid rgba(59,130,246,0.3);
+  }
+
+  .section-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .filter-select {
+    padding: 5px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border2);
+    background: var(--bg2);
+    color: var(--text2);
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .filter-select:focus {
+    outline: none;
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  /* Last update */
+  .last-update {
+    font-size: 11px;
+    color: var(--text3);
+  }
+
+  /* Ranking table */
+  .ranking-table-wrap {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  thead th {
+    padding: 10px 14px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text2);
+    text-align: right;
+    letter-spacing: 0.3px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg3);
+    white-space: nowrap;
+  }
+
+  thead th:first-child,
+  thead th:nth-child(2),
+  thead th:nth-child(3) {
+    text-align: left;
+  }
+
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+    cursor: pointer;
+  }
+
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--bg3); }
+
+  td {
+    padding: 11px 14px;
+    font-size: 13px;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  td:first-child,
+  td:nth-child(2),
+  td:nth-child(3) {
+    text-align: left;
+  }
+
+  /* Rank col */
+  .rank-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 50px;
+  }
+
+  .rank-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    min-width: 22px;
+    text-align: center;
+  }
+
+  .rank-1 .rank-num { color: var(--gold); }
+  .rank-2 .rank-num { color: var(--silver); }
+  .rank-3 .rank-num { color: var(--bronze); }
+
+  .rank-change {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .rank-change.up { color: var(--red); }
+  .rank-change.down { color: var(--green); }
+  .rank-change.same { color: var(--text3); }
+
+  /* Stock name col */
+  .stock-name-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .stock-code {
+    font-size: 11px;
+    color: var(--text2);
+    font-family: 'JetBrains Mono', monospace;
+    min-width: 38px;
+  }
+
+  .stock-name {
+    font-weight: 500;
+    font-size: 13px;
+  }
+
+  /* New badge */
+  .new-badge {
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(124,58,237,0.2);
+    color: #a78bfa;
+    border: 1px solid rgba(124,58,237,0.4);
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+
+  /* Volume bar */
+  .vol-bar-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .vol-bar {
+    width: 80px;
+    height: 4px;
+    background: var(--border2);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .vol-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.5s ease;
+  }
+
+  /* Price / change cells */
+  .price-cell {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .change-cell {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+  }
+
+  .up { color: var(--red); }
+  .down { color: var(--green); }
+  .flat { color: var(--text2); }
+
+  /* Amount cell */
+  .amount-cell {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text);
+  }
+
+  /* Loading / empty */
+  .loading-state {
+    padding: 60px 24px;
+    text-align: center;
+    color: var(--text2);
+  }
+
+  .loading-spinner {
+    width: 28px;
+    height: 28px;
+    border: 2px solid var(--border2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 12px;
+  }
+
+  .loading-text { font-size: 13px; }
+
+  .error-state {
+    padding: 40px 24px;
+    text-align: center;
+    color: var(--text2);
+  }
+
+  .error-icon { font-size: 32px; margin-bottom: 8px; }
+  .error-msg { font-size: 13px; margin-bottom: 4px; }
+  .error-sub { font-size: 11px; color: var(--text3); }
+
+  /* ========= HISTORY TAB ========= */
+  .history-section { display: none; }
+  .history-section.active { display: block; }
+  .ranking-section { display: block; }
+  .ranking-section.hidden { display: none; }
+
+  .date-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .date-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .date-card:hover, .date-card.active {
+    border-color: var(--accent);
+    background: var(--bg3);
+  }
+
+  .date-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  .date-card-date {
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .date-card-count {
+    font-size: 11px;
+    color: var(--text2);
+  }
+
+  .date-card-stocks {
+    font-size: 11px;
+    color: var(--text2);
+    line-height: 1.8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ========= ANALYSIS TAB ========= */
+  .analysis-section { display: none; }
+  .analysis-section.active { display: block; }
+
+  .analysis-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 16px;
+  }
+
+  .analysis-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+  }
+
+  .analysis-card-title {
+    font-size: 12px;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 14px;
+  }
+
+  .freq-list { list-style: none; }
+
+  .freq-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+
+  .freq-item:last-child { border-bottom: none; }
+
+  .freq-rank {
+    font-size: 11px;
+    color: var(--text3);
+    font-family: 'JetBrains Mono', monospace;
+    min-width: 20px;
+  }
+
+  .freq-bar-wrap {
+    flex: 1;
+    position: relative;
+  }
+
+  .freq-bar {
+    height: 3px;
+    background: var(--accent);
+    border-radius: 2px;
+    opacity: 0.7;
+  }
+
+  .freq-name { min-width: 60px; }
+  .freq-days {
+    font-size: 12px;
+    color: var(--text2);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Consistency badge */
+  .consistency-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+  }
+
+  .chip-high {
+    background: rgba(16,185,129,0.12);
+    color: #34d399;
+    border: 1px solid rgba(16,185,129,0.25);
+  }
+
+  .chip-med {
+    background: rgba(245,158,11,0.12);
+    color: #fbbf24;
+    border: 1px solid rgba(245,158,11,0.25);
+  }
+
+  /* Market hours notice */
+  .market-notice {
+    background: rgba(245,158,11,0.08);
+    border: 1px solid rgba(245,158,11,0.2);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: #fbbf24;
+    margin-bottom: 16px;
+    display: none;
+  }
+
+  .market-notice.show { display: flex; align-items: center; gap: 8px; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+  @media (max-width: 768px) {
+    .header-inner { padding: 0 16px; }
+    .main { padding: 16px; }
+    .vol-bar-wrap .vol-bar { display: none; }
+    .stat-value { font-size: 17px; }
+    td, th { padding: 9px 10px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="header-inner">
+    <div class="logo">
+      <div class="logo-icon">📊</div>
+      <div>
+        <div class="logo-text">台股成交值榜</div>
+        <div class="logo-sub">TOP 30 即時成交值追蹤</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="market-status">
+        <div class="status-dot" id="marketDot"></div>
+        <span id="marketStatusText">—</span>
+      </div>
+      <button class="refresh-btn" id="refreshBtn" onclick="fetchAndRender()">
+        <svg id="refreshIcon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polyline points="23 4 23 10 17 10"></polyline>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+        </svg>
+        重新整理
+      </button>
+    </div>
+  </div>
+
+  <nav>
+    <div class="nav-tabs">
+      <button class="nav-tab active" onclick="switchTab('ranking', this)">🏆 即時榜單</button>
+      <button class="nav-tab" onclick="switchTab('history', this)">📅 歷史紀錄</button>
+      <button class="nav-tab" onclick="switchTab('analysis', this)">📈 統計分析</button>
+    </div>
+  </nav>
+</header>
+
+<main class="main">
+
+  <!-- Stats Bar -->
+  <div class="stats-bar">
+    <div class="stat-card">
+      <div class="stat-label">加權指數</div>
+      <div class="stat-value" id="statTaiex">—</div>
+      <div class="stat-sub" id="statTaiexChange">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">全市場成交值</div>
+      <div class="stat-value" id="statTotalVol">—</div>
+      <div class="stat-sub">今日累計（億）</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">TOP30 占比</div>
+      <div class="stat-value" id="statTop30Ratio">—</div>
+      <div class="stat-sub">佔全市場成交值</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">新上榜股票</div>
+      <div class="stat-value" id="statNewCount" style="color:#a78bfa">—</div>
+      <div class="stat-sub">與前日相比</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">資料更新時間</div>
+      <div class="stat-value" id="statTime" style="font-size:14px">—</div>
+      <div class="stat-sub">自動每30秒更新</div>
+    </div>
+  </div>
+
+  <!-- Market closed notice -->
+  <div class="market-notice" id="marketNotice">
+    ⏸ 目前非交易時間（09:00–13:30），顯示最近一次收盤數據
+  </div>
+
+  <!-- ===== RANKING TAB ===== -->
+  <div class="ranking-section" id="rankingSection">
+    <div class="section-header">
+      <div class="section-title">
+        即時成交值排行
+        <span class="section-badge">上市 TSE</span>
+      </div>
+      <div class="section-controls">
+        <select class="filter-select" id="sortSelect" onchange="renderTable()">
+          <option value="amount">依成交值排序</option>
+          <option value="change">依漲跌幅排序</option>
+          <option value="volume">依成交張數排序</option>
+        </select>
+        <span class="last-update" id="lastUpdateText"></span>
+      </div>
+    </div>
+
+    <div class="ranking-table-wrap" id="tableWrap">
+      <div class="loading-state">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">載入中，請稍候⋯</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== HISTORY TAB ===== -->
+  <div class="history-section" id="historySection">
+    <div class="section-header">
+      <div class="section-title">歷史排行紀錄</div>
+      <div class="section-controls">
+        <span class="last-update" id="historyCount"></span>
+      </div>
+    </div>
+
+    <div class="date-grid" id="dateGrid">
+      <div class="loading-state" style="grid-column:1/-1">
+        <div class="loading-text" style="color:var(--text3)">尚無歷史紀錄。系統每日收盤後自動儲存。</div>
+      </div>
+    </div>
+
+    <div id="historyDetail"></div>
+  </div>
+
+  <!-- ===== ANALYSIS TAB ===== -->
+  <div class="analysis-section" id="analysisSection">
+    <div class="section-header">
+      <div class="section-title">統計分析</div>
+      <div class="section-controls">
+        <span class="last-update" id="analysisDataRange"></span>
+      </div>
+    </div>
+    <div class="analysis-grid" id="analysisGrid">
+      <div class="analysis-card" style="grid-column:1/-1; text-align:center; padding:40px">
+        <div style="color:var(--text3); font-size:13px">累積至少 2 天資料後才能顯示分析結果</div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+const PROXY = 'https://YOUR_BACKEND_URL'; // 替換成你的後端位址
+const STORAGE_KEY = 'twstock_history_v2';
+
+let currentData = [];
+let previousData = [];
+let history = [];
+let activeTab = 'ranking';
+
+// ===================== STORAGE =====================
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    history = raw ? JSON.parse(raw) : [];
+  } catch { history = []; }
+}
+
+function saveHistory(dateStr, stocks) {
+  loadHistory();
+  const existing = history.findIndex(h => h.date === dateStr);
+  const entry = { date: dateStr, stocks, savedAt: Date.now() };
+  if (existing >= 0) {
+    history[existing] = entry;
+  } else {
+    history.push(entry);
+    history.sort((a, b) => b.date.localeCompare(a.date));
+    if (history.length > 60) history = history.slice(0, 60);
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+}
+
+// ===================== TAB SWITCHING =====================
+function switchTab(tab, btn) {
+  activeTab = tab;
+  document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('rankingSection').classList.toggle('hidden', tab !== 'ranking');
+  document.getElementById('historySection').classList.toggle('active', tab === 'history');
+  document.getElementById('analysisSection').classList.toggle('active', tab === 'analysis');
+
+  if (tab === 'history') renderHistory();
+  if (tab === 'analysis') renderAnalysis();
+}
+
+// ===================== MARKET STATUS =====================
+function updateMarketStatus() {
+  const now = new Date();
+  const tw = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
+  const day = tw.getDay();
+  const h = tw.getHours(), m = tw.getMinutes();
+  const mins = h * 60 + m;
+  const isWeekday = day >= 1 && day <= 5;
+  const isOpen = isWeekday && mins >= 540 && mins < 810;
+
+  const dot = document.getElementById('marketDot');
+  const txt = document.getElementById('marketStatusText');
+  const notice = document.getElementById('marketNotice');
+
+  dot.className = 'status-dot' + (isOpen ? ' open' : '');
+  txt.textContent = isOpen ? '盤中交易' : '已收盤';
+  notice.classList.toggle('show', !isOpen || !isWeekday);
+}
+
+// ===================== FETCH =====================
+async function fetchTop30() {
+  try {
+    // Try backend first
+    const res = await fetch(`${PROXY}/api/top30`);
+    if (!res.ok) throw new Error('backend error');
+    const json = await res.json();
+    return json;
+  } catch {
+    // Fallback: direct TWSE (CORS will block in browser, use mock for demo)
+    return fetchMockData();
+  }
+}
+
+// Mock data for demo when backend not available
+function fetchMockData() {
+  const stocks = [
+    { code:'2330', name:'台積電', price:925, change:15, changePct:1.65, volume:45230, amount:418878 },
+    { code:'2454', name:'聯發科', price:1285, change:25, changePct:1.98, volume:18450, amount:237032 },
+    { code:'2317', name:'鴻海', price:185.5, change:-1.5, changePct:-0.80, volume:112000, amount:207760 },
+    { code:'3037', name:'欣興', price:388, change:3, changePct:0.78, volume:100410, amount:193592 },
+    { code:'2408', name:'南亞科', price:295, change:17.5, changePct:6.31, volume:101255, amount:187988 },
+    { code:'2344', name:'華邦電', price:108.5, change:3, changePct:2.84, volume:208384, amount:135932 },
+    { code:'2337', name:'旺宏', price:89.7, change:5.2, changePct:6.15, volume:250376, amount:130256 },
+    { code:'2313', name:'華通', price:192, change:10.5, changePct:5.79, volume:116971, amount:122568 },
+    { code:'2382', name:'廣達', price:310, change:8, changePct:2.65, volume:36500, amount:110430 },
+    { code:'3189', name:'景碩', price:270.5, change:24.5, changePct:9.96, volume:77545, amount:109248 },
+    { code:'2303', name:'聯電', price:45.2, change:0.8, changePct:1.80, volume:220000, amount:98768 },
+    { code:'2412', name:'中華電', price:129, change:-0.5, changePct:-0.39, volume:74000, amount:95460 },
+    { code:'2308', name:'台達電', price:385, change:12, changePct:3.22, volume:23450, amount:90532 },
+    { code:'2881', name:'富邦金', price:95.8, change:1.8, changePct:1.92, volume:89200, amount:85456 },
+    { code:'2891', name:'中信金', price:38.5, change:0.5, changePct:1.32, volume:198000, amount:76230 },
+    { code:'2886', name:'兆豐金', price:43.2, change:-0.4, changePct:-0.92, volume:165000, amount:71280 },
+    { code:'0050', name:'元大台灣50', price:185, change:3.5, changePct:1.93, volume:38000, amount:70300 },
+    { code:'2357', name:'華碩', price:530, change:15, changePct:2.91, volume:12500, amount:66250 },
+    { code:'2376', name:'技嘉', price:310, change:22, changePct:7.64, volume:20800, amount:64480 },
+    { code:'2395', name:'研華', price:410, change:-5, changePct:-1.20, volume:15200, amount:62320 },
+    { code:'2301', name:'光寶科', price:120, change:4.5, changePct:3.89, volume:48000, amount:57600 },
+    { code:'3711', name:'日月光投控', price:165, change:3, changePct:1.85, volume:33500, amount:55275 },
+    { code:'2880', name:'華南金', price:28.5, change:0.3, changePct:1.06, volume:180000, amount:51300 },
+    { code:'2882', name:'國泰金', price:76.2, change:1.5, changePct:2.01, volume:65000, amount:49530 },
+    { code:'2002', name:'中鋼', price:28.8, change:0.8, changePct:2.86, volume:165000, amount:47520 },
+    { code:'6669', name:'緯穎', price:3680, change:45, changePct:1.21, volume:1208, amount:44472 },
+    { code:'2379', name:'瑞昱', price:580, change:-10, changePct:-1.69, volume:7200, amount:41760 },
+    { code:'3034', name:'聯詠', price:367.5, change:6, changePct:1.66, volume:10800, amount:39690 },
+    { code:'2409', name:'友達', price:18.9, change:0.7, changePct:3.84, volume:195000, amount:36855 },
+    { code:'2615', name:'萬海', price:98.5, change:2.5, changePct:2.60, volume:36000, amount:35460 },
+  ];
+
+  // Simulate slight variations each refresh
+  return {
+    success: true,
+    source: 'mock',
+    updateTime: new Date().toLocaleTimeString('zh-TW'),
+    stocks: stocks.map(s => ({
+      ...s,
+      price: +(s.price * (0.997 + Math.random() * 0.006)).toFixed(1),
+      changePct: +(s.changePct + (Math.random()-0.5)*0.2).toFixed(2),
+      amount: Math.round(s.amount * (0.98 + Math.random() * 0.04))
+    })),
+    taiex: { price: 22485 + Math.round(Math.random()*200-100), changePct: +(1.2+Math.random()*0.5-0.25).toFixed(2) },
+    totalMarketAmount: 4850 + Math.round(Math.random()*200-100)
+  };
+}
+
+// ===================== RENDER TABLE =====================
+function renderTable() {
+  const wrap = document.getElementById('tableWrap');
+  if (!currentData.length) return;
+
+  const sortBy = document.getElementById('sortSelect').value;
+  const sorted = [...currentData];
+  if (sortBy === 'change') sorted.sort((a,b) => b.changePct - a.changePct);
+  else if (sortBy === 'volume') sorted.sort((a,b) => b.volume - a.volume);
+
+  const maxAmount = Math.max(...sorted.map(s => s.amount));
+  const prevSet = new Set(previousData.map(s => s.code));
+
+  let html = `<table>
+    <thead>
+      <tr>
+        <th>名次</th>
+        <th>股票</th>
+        <th></th>
+        <th>現價</th>
+        <th>漲跌%</th>
+        <th>成交張數</th>
+        <th>成交值（萬）</th>
+      </tr>
+    </thead>
+    <tbody>`;
+
+  sorted.forEach((s, i) => {
+    const rank = i + 1;
+    const isNew = previousData.length > 0 && !prevSet.has(s.code);
+    const prevRank = previousData.findIndex(p => p.code === s.code);
+    const rankDiff = prevRank >= 0 ? (prevRank + 1) - rank : null;
+
+    let rankChangeHtml = '';
+    if (rankDiff === null) {
+      rankChangeHtml = `<span class="rank-change" style="color:var(--text3)">—</span>`;
+    } else if (rankDiff > 0) {
+      rankChangeHtml = `<span class="rank-change up">▲${rankDiff}</span>`;
+    } else if (rankDiff < 0) {
+      rankChangeHtml = `<span class="rank-change down">▼${Math.abs(rankDiff)}</span>`;
+    } else {
+      rankChangeHtml = `<span class="rank-change same">—</span>`;
+    }
+
+    const pct = s.changePct;
+    const cls = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
+    const sign = pct > 0 ? '+' : '';
+    const barW = Math.round((s.amount / maxAmount) * 100);
+    const rankClass = rank <= 3 ? `rank-${rank}` : '';
+    const amtB = (s.amount / 10000).toFixed(2);
+
+    html += `<tr class="${rankClass}" onclick="openStock('${s.code}')">
+      <td>
+        <div class="rank-cell">
+          <span class="rank-num">${rank}</span>
+          ${rankChangeHtml}
+        </div>
+      </td>
+      <td>
+        <div class="stock-name-wrap">
+          <span class="stock-code">${s.code}</span>
+          <span class="stock-name">${s.name}</span>
+          ${isNew ? '<span class="new-badge">NEW</span>' : ''}
+        </div>
+      </td>
+      <td></td>
+      <td class="price-cell">${s.price.toLocaleString()}</td>
+      <td class="change-cell ${cls}">${sign}${pct.toFixed(2)}%</td>
+      <td>
+        <div class="vol-bar-wrap">
+          <span>${s.volume.toLocaleString()}</span>
+          <div class="vol-bar"><div class="vol-bar-fill" style="width:${barW}%"></div></div>
+        </div>
+      </td>
+      <td class="amount-cell">${(s.amount).toLocaleString()}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+
+// ===================== MAIN FETCH =====================
+async function fetchAndRender() {
+  const btn = document.getElementById('refreshBtn');
+  btn.classList.add('spinning');
+
+  try {
+    const data = await fetchTop30();
+    if (!data.success) throw new Error('data error');
+
+    previousData = currentData.length ? [...currentData] : (data.previousStocks || []);
+    currentData = data.stocks;
+
+    // Stats
+    const totalAmount = currentData.reduce((a, s) => a + s.amount, 0);
+    const top30Amount = totalAmount;
+    const marketTotal = data.totalMarketAmount || top30Amount * 1.4;
+    const ratio = ((top30Amount / (marketTotal * 10000)) * 100).toFixed(1);
+    const newCount = previousData.length > 0 ?
+      currentData.filter(s => !previousData.find(p => p.code === s.code)).length : 0;
+
+    document.getElementById('statTaiex').textContent = data.taiex?.price?.toLocaleString() || '—';
+    const taiexPct = data.taiex?.changePct;
+    const taiexEl = document.getElementById('statTaiexChange');
+    if (taiexPct !== undefined) {
+      taiexEl.textContent = (taiexPct > 0 ? '+' : '') + taiexPct.toFixed(2) + '%';
+      document.getElementById('statTaiex').className = 'stat-value ' + (taiexPct > 0 ? 'up' : taiexPct < 0 ? 'down' : '');
+    }
+
+    document.getElementById('statTotalVol').textContent = (marketTotal).toLocaleString();
+    document.getElementById('statTop30Ratio').textContent = ratio + '%';
+    document.getElementById('statNewCount').textContent = newCount;
+    document.getElementById('statTime').textContent = data.updateTime || new Date().toLocaleTimeString('zh-TW');
+
+    const now = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    document.getElementById('lastUpdateText').textContent = '更新：' + now;
+
+    if (data.source === 'mock') {
+      document.getElementById('lastUpdateText').textContent += ' (示範資料)';
+    }
+
+    renderTable();
+    updateMarketStatus();
+
+    // Auto-save to history at market close
+    const tw = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
+    const dateStr = tw.toISOString().split('T')[0];
+    saveHistory(dateStr, currentData.map(s => ({
+      code: s.code, name: s.name, amount: s.amount, changePct: s.changePct
+    })));
+
+  } catch (e) {
+    document.getElementById('tableWrap').innerHTML = `
+      <div class="error-state">
+        <div class="error-icon">⚠️</div>
+        <div class="error-msg">載入失敗，請稍後再試</div>
+        <div class="error-sub">${e.message}</div>
+      </div>`;
+  } finally {
+    btn.classList.remove('spinning');
+  }
+}
+
+// ===================== OPEN STOCK =====================
+function openStock(code) {
+  window.open(`https://tw.stock.yahoo.com/quote/${code}.TW`, '_blank');
+}
+
+// ===================== HISTORY =====================
+function renderHistory() {
+  loadHistory();
+  const grid = document.getElementById('dateGrid');
+  const detail = document.getElementById('historyDetail');
+  const count = document.getElementById('historyCount');
+
+  count.textContent = `共 ${history.length} 筆紀錄`;
+
+  if (!history.length) {
+    grid.innerHTML = `<div class="loading-state" style="grid-column:1/-1">
+      <div class="loading-text" style="color:var(--text3)">尚無歷史紀錄。系統每次更新後自動儲存當日排名。</div>
+    </div>`;
+    detail.innerHTML = '';
+    return;
+  }
+
+  grid.innerHTML = history.map((h, i) => {
+    const top5 = h.stocks.slice(0, 5).map(s => s.name).join('、');
+    return `<div class="date-card" onclick="showHistoryDetail(${i})">
+      <div class="date-card-top">
+        <span class="date-card-date">📅 ${h.date}</span>
+        <span class="date-card-count">${h.stocks.length} 支股票</span>
+      </div>
+      <div class="date-card-stocks">前五名：${top5}</div>
+    </div>`;
+  }).join('');
+
+  detail.innerHTML = '';
+}
+
+function showHistoryDetail(idx) {
+  loadHistory();
+  const h = history[idx];
+  if (!h) return;
+
+  document.querySelectorAll('.date-card').forEach((c, i) =>
+    c.classList.toggle('active', i === idx));
+
+  const detail = document.getElementById('historyDetail');
+  let html = `<div style="margin-top:20px">
+    <div class="section-header">
+      <div class="section-title">${h.date} 成交值排行</div>
+    </div>
+    <div class="ranking-table-wrap">
+      <table>
+        <thead><tr>
+          <th>名次</th><th>股票</th><th></th><th>漲跌%</th><th>成交值（萬）</th>
+        </tr></thead>
+        <tbody>`;
+
+  h.stocks.forEach((s, i) => {
+    const pct = s.changePct;
+    const cls = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
+    const sign = pct > 0 ? '+' : '';
+    html += `<tr>
+      <td><span class="rank-num" style="${i<3?'color:var(--gold)':''}">${i+1}</span></td>
+      <td colspan="2">
+        <div class="stock-name-wrap">
+          <span class="stock-code">${s.code}</span>
+          <span class="stock-name">${s.name}</span>
+        </div>
+      </td>
+      <td class="change-cell ${cls}">${sign}${pct.toFixed(2)}%</td>
+      <td class="amount-cell">${s.amount.toLocaleString()}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table></div></div>';
+  detail.innerHTML = html;
+}
+
+// ===================== ANALYSIS =====================
+function renderAnalysis() {
+  loadHistory();
+  const grid = document.getElementById('analysisGrid');
+  const range = document.getElementById('analysisDataRange');
+
+  if (history.length < 2) {
+    range.textContent = '';
+    grid.innerHTML = `<div class="analysis-card" style="grid-column:1/-1; text-align:center; padding:40px">
+      <div style="color:var(--text3); font-size:13px">累積至少 2 天資料後才能顯示分析結果（目前 ${history.length} 天）</div>
+    </div>`;
+    return;
+  }
+
+  range.textContent = `分析期間：${history[history.length-1].date} ～ ${history[0].date}（共 ${history.length} 天）`;
+
+  // Frequency count
+  const freq = {};
+  history.forEach(h => {
+    h.stocks.forEach((s, i) => {
+      if (!freq[s.code]) freq[s.code] = { code: s.code, name: s.name, days: 0, top10Days: 0, totalAmount: 0 };
+      freq[s.code].days++;
+      if (i < 10) freq[s.code].top10Days++;
+      freq[s.code].totalAmount += s.amount;
+    });
+  });
+
+  const freqArr = Object.values(freq).sort((a, b) => b.days - a.days).slice(0, 15);
+  const maxDays = freqArr[0]?.days || 1;
+
+  let freqHtml = `<ul class="freq-list">`;
+  freqArr.forEach((f, i) => {
+    const pct = (f.days / history.length * 100).toFixed(0);
+    const chipClass = pct >= 70 ? 'chip-high' : 'chip-med';
+    freqHtml += `<li class="freq-item">
+      <span class="freq-rank">${i+1}</span>
+      <span class="freq-name">${f.name}</span>
+      <div class="freq-bar-wrap">
+        <div class="freq-bar" style="width:${(f.days/maxDays*100).toFixed(0)}%"></div>
+      </div>
+      <span class="freq-days">${f.days}天</span>
+      <span class="consistency-chip ${chipClass}">${pct}%</span>
+    </li>`;
+  });
+  freqHtml += '</ul>';
+
+  // New entry tracking
+  const newEntries = {};
+  for (let i = history.length - 1; i >= 1; i--) {
+    const prev = new Set(history[i].stocks.map(s => s.code));
+    history[i-1].stocks.forEach(s => {
+      if (!prev.has(s.code)) {
+        if (!newEntries[s.code]) newEntries[s.code] = { code: s.code, name: s.name, count: 0 };
+        newEntries[s.code].count++;
+      }
+    });
+  }
+
+  const newArr = Object.values(newEntries).sort((a,b) => b.count - a.count).slice(0, 8);
+  let newHtml = '<ul class="freq-list">';
+  if (!newArr.length) {
+    newHtml += `<li class="freq-item" style="color:var(--text3)">資料不足</li>`;
+  } else {
+    newArr.forEach((n, i) => {
+      newHtml += `<li class="freq-item">
+        <span class="freq-rank">${i+1}</span>
+        <span class="freq-name">${n.name}</span>
+        <div style="flex:1"></div>
+        <span class="freq-days">${n.count} 次新上榜</span>
+      </li>`;
+    });
+  }
+  newHtml += '</ul>';
+
+  // Daily new count trend
+  const dailyNew = [];
+  for (let i = history.length - 1; i >= 1; i--) {
+    const prev = new Set(history[i].stocks.map(s => s.code));
+    const newCount = history[i-1].stocks.filter(s => !prev.has(s.code)).length;
+    dailyNew.push({ date: history[i-1].date, newCount });
+  }
+  const avgNew = dailyNew.length ? (dailyNew.reduce((a,b) => a + b.newCount, 0) / dailyNew.length).toFixed(1) : '—';
+
+  grid.innerHTML = `
+    <div class="analysis-card" style="grid-column:1/-1">
+      <div class="analysis-card-title">⚡ 常駐榜排行（出現天數 / 總天數）</div>
+      ${freqHtml}
+    </div>
+    <div class="analysis-card">
+      <div class="analysis-card-title">🆕 最常新上榜股票</div>
+      ${newHtml}
+    </div>
+    <div class="analysis-card">
+      <div class="analysis-card-title">📊 每日換榜統計</div>
+      <div style="padding:10px 0">
+        <div class="freq-item" style="border:none;padding:4px 0">
+          <span style="color:var(--text2);font-size:12px">平均每日新上榜</span>
+          <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:600">${avgNew} 支</span>
+        </div>
+        <div class="freq-item" style="border:none;padding:4px 0">
+          <span style="color:var(--text2);font-size:12px">分析天數</span>
+          <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:600">${history.length} 天</span>
+        </div>
+        <div class="freq-item" style="border:none;padding:4px 0">
+          <span style="color:var(--text2);font-size:12px">收錄股票總數</span>
+          <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:600">${Object.keys(freq).length} 支</span>
+        </div>
+      </div>
+      <div style="margin-top:14px">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:8px">各日新上榜數</div>
+        <div style="display:flex;gap:4px;align-items:flex-end;height:60px">
+          ${dailyNew.slice(-14).map(d => {
+            const h = Math.max(4, (d.newCount / 15 * 60));
+            return `<div title="${d.date}: ${d.newCount}支新上榜" style="flex:1;background:var(--accent);opacity:0.6;height:${h}px;border-radius:2px 2px 0 0;min-width:4px"></div>`;
+          }).join('')}
+        </div>
+      </div>
+    </div>`;
+}
+
+// ===================== INIT =====================
+loadHistory();
+fetchAndRender();
+setInterval(fetchAndRender, 30000); // 每30秒更新
+setInterval(updateMarketStatus, 60000);
+</script>
+
+</body>
+</html>
