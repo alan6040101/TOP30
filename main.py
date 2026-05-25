@@ -48,7 +48,11 @@ def is_market_open() -> bool:
     return (h == 9 and m >= 0) or (9 < h < 13) or (h == 13 and m <= 30)
 
 
-async def fetch_twse_top30() -> list[dict]:
+async def fetch_mi_index_all() -> list[dict]:
+    """
+    從 MI_INDEX 取得所有上市股票，回傳含成交金額的列表。
+    盤中每分鐘更新，收盤後為最終資料。
+    """
     url = "https://www.twse.com.tw/exchangeReport/MI_INDEX"
     headers = {
         "User-Agent": "Mozilla/5.0 (compatible; StockBot/1.0)",
@@ -68,29 +72,27 @@ async def fetch_twse_top30() -> list[dict]:
         try:
             code = row[0].strip()
             name = row[1].strip()
-            amount_str = row[4].replace(",", "").strip()
-            price_str = row[8].replace(",", "").strip()
-            sign = row[9]
-            diff_str = row[10].replace(",", "").strip()
-            volume_str = row[2].replace(",", "").strip()
+            amount_str = row[4].replace(",", "").strip()   # 成交金額（元）
+            price_str  = row[8].replace(",", "").strip()   # 收盤/現價
+            sign       = row[9]                            # 漲跌符號 HTML
+            diff_str   = row[10].replace(",", "").strip()  # 漲跌價差
 
             if not amount_str or amount_str == "--":
                 continue
 
-            amount = int(amount_str) // 10000
-            price = float(price_str) if price_str not in ("--", "") else 0
-            diff = float(diff_str) if diff_str not in ("--", "") else 0
-            volume = int(volume_str) // 1000 if volume_str not in ("--", "") else 0
+            amount = int(amount_str) // 10000  # 元 → 萬元
+            price  = float(price_str) if price_str not in ("--", "") else 0
+            diff   = float(diff_str)  if diff_str  not in ("--", "") else 0
 
-            if "color:red" in sign or "+" in sign:
+            if "color:red" in sign or sign.strip() == "+":
                 diff = abs(diff)
-            elif "color:green" in sign or "-" in sign:
+            elif "color:green" in sign or sign.strip() == "-":
                 diff = -abs(diff)
             else:
                 diff = 0
 
             prev_price = price - diff
-            change_pct = round((diff / prev_price * 100), 2) if prev_price else 0
+            change_pct = round(diff / prev_price * 100, 2) if prev_price else 0
 
             stocks.append({
                 "code": code,
@@ -98,7 +100,6 @@ async def fetch_twse_top30() -> list[dict]:
                 "price": price,
                 "change": diff,
                 "changePct": change_pct,
-                "volume": volume,
                 "amount": amount,
             })
         except (ValueError, IndexError):
@@ -106,6 +107,77 @@ async def fetch_twse_top30() -> list[dict]:
 
     stocks.sort(key=lambda x: x["amount"], reverse=True)
     return stocks[:30]
+
+
+async def fetch_realtime_prices(codes: list[str]) -> dict:
+    """
+    盤中用 mis.twse.com.tw/stock/api/getStockInfo.jsp 取得即時報價。
+    回傳 {code: {price, change, changePct}} 字典。
+    欄位：z=現價, y=昨收, v=成交量(股), tv=當盤成交量
+    """
+    if not codes:
+        return {}
+
+    # 最多一次 100 支，分批查詢
+    BATCH = 100
+    result = {}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; StockBot/1.0)",
+        "Referer": "https://mis.twse.com.tw/",
+    }
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        for i in range(0, len(codes), BATCH):
+            batch = codes[i:i+BATCH]
+            ex_ch = "|".join(f"tse_{c}.tw" for c in batch)
+            url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={ex_ch}&json=1&delay=0&_={int(datetime.now().timestamp()*1000)}"
+            try:
+                r = await client.get(url, headers=headers)
+                r.raise_for_status()
+                data = r.json()
+                for item in data.get("msgArray", []):
+                    code = item.get("c", "")
+                    z = item.get("z", "-")   # 現價
+                    y = item.get("y", "-")   # 昨收
+                    if not code or z in ("-", "--", "") or y in ("-", "--", ""):
+                        continue
+                    try:
+                        price = float(z)
+                        yesterday = float(y)
+                        change = round(price - yesterday, 2)
+                        change_pct = round(change / yesterday * 100, 2) if yesterday else 0
+                        result[code] = {
+                            "price": price,
+                            "change": change,
+                            "changePct": change_pct,
+                        }
+                    except (ValueError, ZeroDivisionError):
+                        continue
+            except Exception:
+                continue
+
+    return result
+
+
+async def fetch_twse_top30() -> list[dict]:
+    """
+    主流程：
+    1. 從 MI_INDEX 取得成交金額排行（盤中每分鐘更新）
+    2. 盤中時另外查即時報價覆蓋 price/change/changePct
+    3. 回傳 TOP30
+    """
+    stocks = await fetch_mi_index_all()
+
+    if is_market_open():
+        codes = [s["code"] for s in stocks]
+        rt = await fetch_realtime_prices(codes)
+        for s in stocks:
+            if s["code"] in rt:
+                s["price"]     = rt[s["code"]]["price"]
+                s["change"]    = rt[s["code"]]["change"]
+                s["changePct"] = rt[s["code"]]["changePct"]
+
+    return stocks
 
 
 async def fetch_monthly_revenue() -> dict:
