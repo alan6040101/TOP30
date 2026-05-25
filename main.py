@@ -102,67 +102,138 @@ async def proxy_get(path_and_query: str) -> Optional[str]:
     return None
 
 
-# ── 收盤後：STOCK_DAY_ALL（最準確）────────────────────
+# ── 收盤後資料 ────────────────────────────────────────
 def _is_today_tw(date_str: str) -> bool:
     """
     確認 STOCK_DAY_ALL 的 Date 欄位是否是台灣今日。
     格式：'1150525' = 民國115年5月25日
     """
     today = tw_now()
-    # 民國年 = 西元年 - 1911
     roc_year = today.year - 1911
     expected = f"{roc_year}{today.month:02d}{today.day:02d}"
     return date_str.strip() == expected
 
 
-async def fetch_closing_top30() -> list[dict]:
+async def fetch_mi_index_top30() -> list[dict]:
     """
-    從 STOCK_DAY_ALL 取今日最終成交金額，排行取 TOP30。
-    TWSE 在每個交易日收盤後約 14:30~16:00 更新，
-    若資料不是今日（例如剛收盤 API 還沒更新），
-    fallback 到 getStockInfo 盤後快照（v 值雖然不是最終，但至少是今日）。
+    從 MI_INDEX（type=ALLBUT0999）取今日成交資料，透過 Cloudflare Worker。
+    這是收盤後最準確的資料來源，當日資料即時更新。
+    欄位（data9）：
+      [0]代號 [1]名稱 [2]成交股數 [3]成交筆數 [4]成交金額
+      [8]收盤價 [9]漲跌符號 [10]漲跌價差
     """
-    url = f"{OPENAPI_BASE}/exchangeReport/STOCK_DAY_ALL"
-    async with httpx.AsyncClient(timeout=20) as c:
-        r = await c.get(url, headers=HEADERS_API)
-        r.raise_for_status()
-        rows = r.json()
+    ts = int(datetime.now().timestamp() * 1000)
+    path = f"/exchangeReport/MI_INDEX?response=json&type=ALLBUT0999&_={ts}"
+    raw = await proxy_get(path)
+    if not raw:
+        return []
 
-    # 檢查資料日期
-    sample_date = rows[0].get("Date", "") if rows else ""
-    if not _is_today_tw(sample_date):
-        # 資料不是今日，改用 getStockInfo（盤後快照）
-        return await fetch_intraday_top30()
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
 
+    if data.get("stat") != "OK":
+        return []
+
+    rows = data.get("data9", [])
     results = []
     for row in rows:
-        code = str(row.get("Code", "")).strip()
-        if not (code.isdigit() and len(code) == 4):
-            continue
         try:
-            trade_value = int(row.get("TradeValue", "0").replace(",", ""))
-            amount_wan  = trade_value // 10000   # 元 → 萬元
+            if len(row) < 11:
+                continue
+            code       = str(row[0]).strip()
+            name       = str(row[1]).strip()
+            amount_str = str(row[4]).replace(",", "").strip()  # 成交金額（元）
+            price_str  = str(row[8]).replace(",", "").strip()  # 收盤價
+            sign       = str(row[9]).strip()                   # 漲跌符號（HTML）
+            diff_str   = str(row[10]).replace(",", "").strip() # 漲跌價差
 
-            close_str  = row.get("ClosingPrice", "0").replace(",", "")
-            change_str = row.get("Change", "0").replace(",", "").replace("+", "")
-            price  = float(close_str) if close_str not in ("--", "") else 0
-            change = float(change_str) if change_str not in ("--", "", "X") else 0
-            prev   = price - change
-            pct    = round(change / prev * 100, 2) if prev else 0
+            if not code.isdigit() or len(code) != 4:
+                continue
+            if not amount_str or amount_str in ("--", ""):
+                continue
 
+            amount_wan = int(amount_str) // 10000
             if amount_wan <= 0:
                 continue
 
+            price = float(price_str) if price_str not in ("--", "") else 0
+            diff  = float(diff_str)  if diff_str  not in ("--", "") else 0
+
+            if "color:red" in sign or sign.strip() == "+":
+                diff = abs(diff)
+            elif "color:green" in sign or sign.strip() == "-":
+                diff = -abs(diff)
+            else:
+                diff = 0.0
+
+            prev   = price - diff
+            pct    = round(diff / prev * 100, 2) if prev else 0
+
             results.append({
-                "code": code, "name": row.get("Name", ""),
-                "price": price, "change": change, "changePct": pct,
+                "code": code, "name": name,
+                "price": price, "change": diff, "changePct": pct,
                 "amount": amount_wan,
             })
-        except (ValueError, ZeroDivisionError):
+        except (ValueError, ZeroDivisionError, IndexError):
             continue
 
     results.sort(key=lambda x: x["amount"], reverse=True)
     return results[:30]
+
+
+async def fetch_closing_top30() -> list[dict]:
+    """
+    收盤後資料策略（按優先順序）：
+    1. MI_INDEX（透過 Cloudflare Worker）→ 最準，有今日完整成交金額
+    2. STOCK_DAY_ALL（Railway 直接打）→ 當日更新後才準
+    3. getStockInfo 盤後快照 → 最後 fallback
+    """
+    # 方法1：MI_INDEX（透過 Worker）
+    mi_result = await fetch_mi_index_top30()
+    if mi_result:
+        return mi_result
+
+    # 方法2：STOCK_DAY_ALL
+    try:
+        url = f"{OPENAPI_BASE}/exchangeReport/STOCK_DAY_ALL"
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.get(url, headers=HEADERS_API)
+            r.raise_for_status()
+            rows = r.json()
+
+        sample_date = rows[0].get("Date", "") if rows else ""
+        if _is_today_tw(sample_date):
+            results = []
+            for row in rows:
+                code = str(row.get("Code", "")).strip()
+                if not (code.isdigit() and len(code) == 4):
+                    continue
+                try:
+                    trade_value = int(row.get("TradeValue", "0").replace(",", ""))
+                    amount_wan  = trade_value // 10000
+                    close_str   = row.get("ClosingPrice", "0").replace(",", "")
+                    change_str  = row.get("Change", "0").replace(",", "").replace("+", "")
+                    price  = float(close_str)  if close_str  not in ("--", "") else 0
+                    change = float(change_str) if change_str not in ("--", "", "X") else 0
+                    prev   = price - change
+                    pct    = round(change / prev * 100, 2) if prev else 0
+                    if amount_wan <= 0:
+                        continue
+                    results.append({"code": code, "name": row.get("Name", ""),
+                                    "price": price, "change": change, "changePct": pct,
+                                    "amount": amount_wan})
+                except (ValueError, ZeroDivisionError):
+                    continue
+            if results:
+                results.sort(key=lambda x: x["amount"], reverse=True)
+                return results[:30]
+    except Exception:
+        pass
+
+    # 方法3：getStockInfo fallback
+    return await fetch_intraday_top30()
 
 
 # ── 盤中：getStockInfo 全市場掃描────────────────────
@@ -549,7 +620,27 @@ async def debug():
     except Exception as e:
         high_debug["error"] = str(e)
 
-    # 3. STOCK_DAY_ALL 前5名 + 日期驗證
+
+    # 3. MI_INDEX 測試（透過 Cloudflare Worker）
+    mi_debug = []
+    try:
+        ts = int(datetime.now().timestamp() * 1000)
+        mi_raw = await proxy_get(f"/exchangeReport/MI_INDEX?response=json&type=ALLBUT0999&_={ts}")
+        if mi_raw:
+            mi_data = json.loads(mi_raw)
+            mi_debug = {
+                "stat": mi_data.get("stat"),
+                "date": mi_data.get("date"),
+                "data9_count": len(mi_data.get("data9", [])),
+                "fields9": mi_data.get("fields9"),
+                "first3_rows": mi_data.get("data9", [])[:3],
+            }
+        else:
+            mi_debug = {"error": "proxy returned None"}
+    except Exception as e:
+        mi_debug = {"error": str(e)}
+
+    # 4. STOCK_DAY_ALL 前5名 + 日期驗證
     day_all_debug = []
     stock_day_date = ""
     is_today = False
@@ -573,16 +664,17 @@ async def debug():
     except Exception as e:
         day_all_debug = [{"error": str(e)}]
 
-    # 4. 加權指數
+    # 5. 加權指數
     taiex_raw = await proxy_get("/stock/data/mis_ohlc_TSE.txt")
 
     return JSONResponse({
         "time": datetime.now().isoformat(),
         "tw_time": tw_now().isoformat(),
         "is_market_open": is_market_open(),
-        "getStockInfo": stock_debug,
+        "getStockInfo_sample": stock_debug,
         "revenue_fields": rev_debug,
         "revenue_high_t187ap26": high_debug,
+        "MI_INDEX_via_worker": mi_debug,
         "STOCK_DAY_ALL_date": stock_day_date,
         "STOCK_DAY_ALL_is_today": is_today,
         "STOCK_DAY_ALL_top10": day_all_debug,
