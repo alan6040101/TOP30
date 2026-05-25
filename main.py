@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse
 import httpx
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from pathlib import Path
 
@@ -52,8 +52,15 @@ HEADERS_PROXY = {"User-Agent": "Mozilla/5.0 (compatible; StockBot/1.0)"}
 HEADERS_API   = {"User-Agent": "Mozilla/5.0 (compatible; StockBot/1.0)", "Accept": "application/json"}
 
 
+TW_TZ = timezone(timedelta(hours=8))
+
+def tw_now() -> datetime:
+    """取得台灣時間（UTC+8），不依賴伺服器時區"""
+    return datetime.now(timezone.utc).astimezone(TW_TZ)
+
+
 def is_market_open() -> bool:
-    tw = datetime.now()
+    tw = tw_now()
     if tw.weekday() >= 5:
         return False
     h, m = tw.hour, tw.minute
@@ -365,9 +372,9 @@ async def get_top30():
             s["revenueMonth"]  = rev["revenueMonth"]  if rev else ""
             s["revenueIsHigh"] = rev["revenueIsHigh"] if rev else False
 
-        tw_now   = datetime.now()
-        date_str = tw_now.strftime("%Y-%m-%d")
-        time_str = tw_now.strftime("%H:%M:%S")
+        _now     = tw_now()
+        date_str = _now.strftime("%Y-%m-%d")
+        time_str = _now.strftime("%H:%M:%S")
 
         if not is_market_open():
             save_history(date_str, [
