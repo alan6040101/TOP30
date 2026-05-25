@@ -949,6 +949,15 @@ function renderTable() {
     const barW = Math.round((s.amount / maxAmount) * 100);
     const rankClass = rank <= 3 ? `rank-${rank}` : '';
 
+    // 漲停（≥9.5%）/ 跌停（≤-9.5%）背景色
+    const isLimitUp   = pct >= 9.5;
+    const isLimitDown = pct <= -9.5;
+    const rowBg = isLimitUp
+      ? 'background:rgba(239,68,68,0.18);'
+      : isLimitDown
+        ? 'background:rgba(16,185,129,0.15);'
+        : '';
+
     // 月營收年增率欄位
     let revenueHtml = '';
     if (s.revenueYoY !== null && s.revenueYoY !== undefined) {
@@ -960,13 +969,12 @@ function renderTable() {
         : '';
       revenueHtml = `<span style="display:inline-flex;align-items:center">${highBadge}<span class="change-cell ${yoyCls}" style="font-size:13px">${yoySign}${s.revenueYoY.toFixed(1)}%${monthLabel}</span></span>`;
     } else if (s.revenueMonth) {
-      // 有月份但無年增率數值（金融股等不計算YoY的情形）
       revenueHtml = `<span style="color:var(--text2);font-size:12px">— <span style="font-size:11px">(${s.revenueMonth})</span></span>`;
     } else {
       revenueHtml = `<span style="color:var(--text3);font-size:12px">—</span>`;
     }
 
-    html += `<tr class="${rankClass}" onclick="openStock('${s.code}')">
+    html += `<tr class="${rankClass}" style="${rowBg}" onclick="openStock('${s.code}')">
       <td>
         <div class="rank-cell">
           <span class="rank-num">${rank}</span>
