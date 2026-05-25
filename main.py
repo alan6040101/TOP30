@@ -103,17 +103,36 @@ async def proxy_get(path_and_query: str) -> Optional[str]:
 
 
 # ── 收盤後：STOCK_DAY_ALL（最準確）────────────────────
+def _is_today_tw(date_str: str) -> bool:
+    """
+    確認 STOCK_DAY_ALL 的 Date 欄位是否是台灣今日。
+    格式：'1150525' = 民國115年5月25日
+    """
+    today = tw_now()
+    # 民國年 = 西元年 - 1911
+    roc_year = today.year - 1911
+    expected = f"{roc_year}{today.month:02d}{today.day:02d}"
+    return date_str.strip() == expected
+
+
 async def fetch_closing_top30() -> list[dict]:
     """
     從 STOCK_DAY_ALL 取今日最終成交金額，排行取 TOP30。
-    欄位：Code, Name, TradeValue(元), ClosingPrice, Change
-    只取 4 位純數字代號（普通股，排除 ETF/ETN）
+    TWSE 在每個交易日收盤後約 14:30~16:00 更新，
+    若資料不是今日（例如剛收盤 API 還沒更新），
+    fallback 到 getStockInfo 盤後快照（v 值雖然不是最終，但至少是今日）。
     """
     url = f"{OPENAPI_BASE}/exchangeReport/STOCK_DAY_ALL"
     async with httpx.AsyncClient(timeout=20) as c:
         r = await c.get(url, headers=HEADERS_API)
         r.raise_for_status()
         rows = r.json()
+
+    # 檢查資料日期
+    sample_date = rows[0].get("Date", "") if rows else ""
+    if not _is_today_tw(sample_date):
+        # 資料不是今日，改用 getStockInfo（盤後快照）
+        return await fetch_intraday_top30()
 
     results = []
     for row in rows:
@@ -235,10 +254,39 @@ async def fetch_monthly_revenue() -> dict:
     if not result:
         result = await _fetch_revenue_csv()
 
+    # 另外抓「本月營收創新高」清單，補強 is_high 判斷
+    high_codes = await _fetch_revenue_high_set()
+    for code, data in result.items():
+        if code in high_codes:
+            data["revenueIsHigh"] = True
+
     if result:
         _revenue_cache = result
         _revenue_cache_time = datetime.now()
     return result or _revenue_cache or {}
+
+
+async def _fetch_revenue_high_set() -> set:
+    """
+    從 mopsfin t187ap26_L.csv 取本月營收創歷史新高的股票代號集合。
+    這個檔案只列出當月創新高的公司，欄位：公司代號, 公司名稱
+    """
+    url = "https://mopsfin.twse.com.tw/opendata/t187ap26_L.csv"
+    try:
+        import csv, io
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(url, headers={**HEADERS_API, "Accept": "text/csv,*/*",
+                                          "Referer": "https://mopsfin.twse.com.tw/"})
+            r.raise_for_status()
+        reader = csv.DictReader(io.StringIO(r.text))
+        codes = set()
+        for row in reader:
+            code = row.get("公司代號", "").strip().strip('"')
+            if code:
+                codes.add(code)
+        return codes
+    except Exception:
+        return set()
 
 
 async def _fetch_revenue_json() -> dict:
@@ -271,10 +319,13 @@ async def _fetch_revenue_json() -> dict:
             yoy_str    = str(row.get(yoy_key, "")).strip() if yoy_key else ""
             if not code:
                 continue
+            yoy = _parse_float(yoy_str)
+            # 歷史新高判斷：備註含關鍵字，或累計YoY超過門檻（備用）
+            is_high = ("歷史新高" in note or "歷史" in note)
             result[code] = {
-                "revenueYoY":    _parse_float(yoy_str),
+                "revenueYoY":    yoy,
                 "revenueMonth":  _parse_month(period_str),
-                "revenueIsHigh": "歷史新高" in note,
+                "revenueIsHigh": is_high,
                 "period":        period_str,
             }
         return result
@@ -436,16 +487,21 @@ async def debug():
     except Exception as e:
         rev_debug["error"] = str(e)
 
-    # 3. STOCK_DAY_ALL 前5名
+    # 3. STOCK_DAY_ALL 前5名 + 日期驗證
     day_all_debug = []
+    stock_day_date = ""
+    is_today = False
     try:
         async with httpx.AsyncClient(timeout=15) as c:
             r = await c.get(f"{OPENAPI_BASE}/exchangeReport/STOCK_DAY_ALL", headers=HEADERS_API)
             rows = r.json()
+        stock_day_date = rows[0].get("Date","") if rows else ""
+        is_today = _is_today_tw(stock_day_date)
         stocks = [
             {"code": row["Code"], "name": row["Name"],
              "amount_wan": int(row["TradeValue"])//10000,
-             "close": row["ClosingPrice"], "change": row["Change"]}
+             "close": row["ClosingPrice"], "change": row["Change"],
+             "date": row["Date"]}
             for row in rows
             if row.get("Code","").isdigit() and len(row.get("Code",""))==4
             and int(row.get("TradeValue","0")) > 0
@@ -460,9 +516,12 @@ async def debug():
 
     return JSONResponse({
         "time": datetime.now().isoformat(),
+        "tw_time": tw_now().isoformat(),
         "is_market_open": is_market_open(),
         "getStockInfo": stock_debug,
         "revenue_fields": rev_debug,
+        "STOCK_DAY_ALL_date": stock_day_date,
+        "STOCK_DAY_ALL_is_today": is_today,
         "STOCK_DAY_ALL_top10": day_all_debug,
         "taiex_raw": taiex_raw,
     })
