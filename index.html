@@ -950,13 +950,14 @@ function renderTable() {
     const rankClass = rank <= 3 ? `rank-${rank}` : '';
 
     // 漲停（≥9.5%）/ 跌停（≤-9.5%）背景色
+    // 漲停（≥9.5%）/ 跌停（≤-9.5%）背景色
     const isLimitUp   = pct >= 9.5;
     const isLimitDown = pct <= -9.5;
     // 漲停/跌停只標在漲跌幅%數格子上，不影響整行
     const limitStyle = isLimitUp
-      ? 'background:rgba(239,68,68,0.25);border-radius:4px;padding:2px 6px;'
+      ? 'background:#dc2626;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;'
       : isLimitDown
-        ? 'background:rgba(16,185,129,0.2);border-radius:4px;padding:2px 6px;'
+        ? 'background:#059669;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;'
         : '';
 
     // 月營收年增率欄位
