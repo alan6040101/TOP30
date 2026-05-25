@@ -133,8 +133,9 @@ async def fetch_intraday_top30() -> list[dict]:
 
                 price      = float(z)
                 yesterday  = float(y) if y not in ("-", "--", "") else price
-                volume_shares = int(float(v))  # 股
-                amount_wan = int(volume_shares * price / 10000)  # 萬元
+                volume_lots = int(float(v))  # 張（1張=1000股）
+                # 成交值(萬) = 張數 × 每股價格 × 1000股 ÷ 10000 = 張數 × 價格 ÷ 10
+                amount_wan = int(volume_lots * price / 10)
 
                 if amount_wan <= 0:
                     continue
