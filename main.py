@@ -110,10 +110,16 @@ async def fetch_twse_top30() -> list[dict]:
 
 async def fetch_monthly_revenue() -> dict:
     """
-    從 TWSE OpenAPI 抓取上市公司月營收資料
-    API: https://openapi.twse.com.tw/v1/opendata/t187ap05_L
-    每支股票回傳最新公布的那個月（不管是當月還是上月），直接顯示數字+月份。
-    備註欄位包含「歷史新高」時標記 revenueIsHigh=True。
+    從 mopsfin.twse.com.tw 抓取上市公司月營收 CSV。
+    確認欄位（來自實際 CSV）：
+      出表日期, 資料年月, 公司代號, 公司名稱, 產業別,
+      營業收入-當月營收, 營業收入-上月營收, 營業收入-去年當月營收,
+      營業收入-上月比較增減(%), 營業收入-去年同月增減(%),
+      累計營業收入-當月累計營收, 累計營業收入-去年累計營收,
+      累計營業收入-前期比較增減(%), 備註
+
+    資料年月格式：「11502」= 民國115年2月，後兩碼為月份。
+    備註欄含「歷史新高」時標記創新高。
     """
     global _revenue_cache, _revenue_cache_time
 
@@ -122,51 +128,56 @@ async def fetch_monthly_revenue() -> dict:
         if elapsed < REVENUE_CACHE_SECONDS:
             return _revenue_cache
 
-    url = "https://openapi.twse.com.tw/v1/opendata/t187ap05_L"
+    url = "https://mopsfin.twse.com.tw/opendata/t187ap05_L.csv"
     headers = {
         "User-Agent": "Mozilla/5.0 (compatible; StockBot/1.0)",
-        "Accept": "application/json",
+        "Accept": "text/csv,*/*",
+        "Referer": "https://mopsfin.twse.com.tw/",
     }
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
             r = await client.get(url, headers=headers)
             r.raise_for_status()
-            rows = r.json()
+            text = r.text
+
+        import csv, io
+        reader = csv.DictReader(io.StringIO(text))
 
         result = {}
-        for row in rows:
+        for row in reader:
             try:
-                code = str(row.get("公司代號", "")).strip()
+                # 去掉欄位名與值的前後引號／空白（CSV 可能帶 BOM 或引號）
+                def clean(s):
+                    return s.strip().strip('"').strip() if s else ""
+
+                code = clean(row.get("公司代號", ""))
                 if not code:
                     continue
 
-                # 年增率：欄位名為「營業收入_去年同月增減」
-                yoy_str = str(row.get("營業收入_去年同月增減", "")).strip()
+                # 年增率
+                yoy_str = clean(row.get("營業收入-去年同月增減(%)", ""))
 
-                # 資料年月格式為 "11404" = 民國114年4月
-                period_str = str(row.get("資料年月", "")).strip()
-
-                # 備註欄位，包含「歷史新高」或「本月營收創歷史新高」等字樣
-                note = str(row.get("備註", "")).strip()
-
+                # 資料年月：「11502」→ 後兩碼 "02" → "2月"
+                period_str = clean(row.get("資料年月", ""))
                 month_label = ""
-                if len(period_str) >= 5:
+                if len(period_str) >= 2:
                     try:
                         month_num = int(period_str[-2:])
                         month_label = f"{month_num}月"
                     except ValueError:
                         pass
 
+                # 備註
+                note = clean(row.get("備註", ""))
+                is_high = "歷史新高" in note or "歷史高" in note
+
                 yoy = None
-                if yoy_str and yoy_str not in ("--", "", "nan", "N/A", "不適用"):
+                if yoy_str and yoy_str not in ("-", "--", "", "N/A", "不適用"):
                     try:
                         yoy = round(float(yoy_str), 2)
                     except ValueError:
                         yoy = None
-
-                # 判斷是否創歷史新高
-                is_high = "歷史新高" in note or "歷史高" in note
 
                 result[code] = {
                     "revenueYoY": yoy,
@@ -177,11 +188,14 @@ async def fetch_monthly_revenue() -> dict:
             except Exception:
                 continue
 
-        _revenue_cache = result
-        _revenue_cache_time = datetime.now()
+        if result:
+            _revenue_cache = result
+            _revenue_cache_time = datetime.now()
+
         return result
 
     except Exception:
+        # 回傳快取（若有），避免因網路問題清空資料
         return _revenue_cache or {}
 
 
