@@ -268,22 +268,55 @@ async def fetch_monthly_revenue() -> dict:
 
 async def _fetch_revenue_high_set() -> set:
     """
-    從 mopsfin t187ap26_L.csv 取本月營收創歷史新高的股票代號集合。
-    這個檔案只列出當月創新高的公司，欄位：公司代號, 公司名稱
+    取本月營收創歷史新高的股票代號集合。
+    先試 TWSE OpenAPI JSON（t187ap26_L），再 fallback CSV。
     """
-    url = "https://mopsfin.twse.com.tw/opendata/t187ap26_L.csv"
+    # 方法1：OpenAPI JSON
+    try:
+        url = f"{OPENAPI_BASE}/opendata/t187ap26_L"
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(url, headers=HEADERS_API)
+            if r.status_code == 200:
+                rows = r.json()
+                codes = set()
+                for row in rows:
+                    # 嘗試各種可能欄位名
+                    code = (str(row.get("公司代號","") or row.get("Code","") or "")).strip()
+                    if code:
+                        codes.add(code)
+                if codes:
+                    return codes
+    except Exception:
+        pass
+
+    # 方法2：mopsfin CSV（有 BOM，需特別處理）
     try:
         import csv, io
+        url = "https://mopsfin.twse.com.tw/opendata/t187ap26_L.csv"
         async with httpx.AsyncClient(timeout=15) as c:
             r = await c.get(url, headers={**HEADERS_API, "Accept": "text/csv,*/*",
                                           "Referer": "https://mopsfin.twse.com.tw/"})
             r.raise_for_status()
-        reader = csv.DictReader(io.StringIO(r.text))
+
+        # 移除 BOM，並處理引號
+        text = r.text.lstrip("\ufeff")
+        reader = csv.reader(io.StringIO(text))
         codes = set()
+        header = None
         for row in reader:
-            code = row.get("公司代號", "").strip().strip('"')
-            if code:
-                codes.add(code)
+            if header is None:
+                # 找到「公司代號」欄位的 index
+                cleaned = [c.strip().strip('"') for c in row]
+                header = cleaned
+                try:
+                    code_idx = header.index("公司代號")
+                except ValueError:
+                    code_idx = 0  # 通常第一欄是代號
+                continue
+            if row and len(row) > code_idx:
+                code = row[code_idx].strip().strip('"')
+                if code and code.isdigit():
+                    codes.add(code)
         return codes
     except Exception:
         return set()
@@ -491,20 +524,28 @@ async def debug():
     high_debug = {}
     try:
         import csv, io
+        # 先試 OpenAPI JSON
         async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get("https://mopsfin.twse.com.tw/opendata/t187ap26_L.csv",
-                           headers={**HEADERS_API, "Accept":"text/csv,*/*",
-                                    "Referer":"https://mopsfin.twse.com.tw/"})
-        high_debug["status"] = r.status_code
-        high_debug["preview"] = r.text[:500]
-        reader = csv.DictReader(io.StringIO(r.text))
-        codes = []
-        for row in reader:
-            code = row.get("公司代號","").strip().strip('"')
-            if code:
-                codes.append(code)
-        high_debug["count"] = len(codes)
-        high_debug["sample"] = codes[:10]
+            r_json = await c.get(f"{OPENAPI_BASE}/opendata/t187ap26_L", headers=HEADERS_API)
+        high_debug["json_status"] = r_json.status_code
+        if r_json.status_code == 200:
+            rows_h = r_json.json()
+            high_debug["json_count"] = len(rows_h)
+            high_debug["json_fields"] = list(rows_h[0].keys()) if rows_h else []
+            high_debug["json_sample"] = rows_h[:3]
+        # 也試 CSV
+        async with httpx.AsyncClient(timeout=15) as c:
+            r_csv = await c.get("https://mopsfin.twse.com.tw/opendata/t187ap26_L.csv",
+                               headers={**HEADERS_API, "Accept":"text/csv,*/*",
+                                        "Referer":"https://mopsfin.twse.com.tw/"})
+        high_debug["csv_status"] = r_csv.status_code
+        text_h = r_csv.text.lstrip("\ufeff")
+        high_debug["csv_first200"] = text_h[:200]
+        reader_h = csv.reader(io.StringIO(text_h))
+        rows_csv = list(reader_h)
+        high_debug["csv_header"] = rows_csv[0] if rows_csv else []
+        high_debug["csv_row2"] = rows_csv[1] if len(rows_csv) > 1 else []
+        high_debug["csv_total_rows"] = len(rows_csv)
     except Exception as e:
         high_debug["error"] = str(e)
 
