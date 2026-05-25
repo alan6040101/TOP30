@@ -473,7 +473,7 @@ async def debug():
         except Exception as e:
             stock_debug = [{"error": str(e)}]
 
-    # 2. 月營收欄位名
+    # 2. 月營收欄位名 + 創新高清單
     rev_debug = {}
     try:
         async with httpx.AsyncClient(timeout=15) as c:
@@ -486,6 +486,27 @@ async def debug():
                 break
     except Exception as e:
         rev_debug["error"] = str(e)
+
+    # 2b. 創新高清單
+    high_debug = {}
+    try:
+        import csv, io
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get("https://mopsfin.twse.com.tw/opendata/t187ap26_L.csv",
+                           headers={**HEADERS_API, "Accept":"text/csv,*/*",
+                                    "Referer":"https://mopsfin.twse.com.tw/"})
+        high_debug["status"] = r.status_code
+        high_debug["preview"] = r.text[:500]
+        reader = csv.DictReader(io.StringIO(r.text))
+        codes = []
+        for row in reader:
+            code = row.get("公司代號","").strip().strip('"')
+            if code:
+                codes.append(code)
+        high_debug["count"] = len(codes)
+        high_debug["sample"] = codes[:10]
+    except Exception as e:
+        high_debug["error"] = str(e)
 
     # 3. STOCK_DAY_ALL 前5名 + 日期驗證
     day_all_debug = []
@@ -520,6 +541,7 @@ async def debug():
         "is_market_open": is_market_open(),
         "getStockInfo": stock_debug,
         "revenue_fields": rev_debug,
+        "revenue_high_t187ap26": high_debug,
         "STOCK_DAY_ALL_date": stock_day_date,
         "STOCK_DAY_ALL_is_today": is_today,
         "STOCK_DAY_ALL_top10": day_all_debug,
