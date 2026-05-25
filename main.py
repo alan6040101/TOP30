@@ -418,9 +418,18 @@ async def get_analysis(days: int = 30):
 
 @app.get("/health")
 async def health():
-    proxy_ok = await proxy_get("/stock/data/mis_ohlc_TSE.txt")
-    return {"status": "ok", "proxy": "ok" if proxy_ok else "error",
-            "time": datetime.now().isoformat()}
+    proxy_status = "unknown"
+    try:
+        result = await proxy_get("/stock/data/mis_ohlc_TSE.txt")
+        proxy_status = "ok" if result else "error - empty response"
+    except Exception as e:
+        proxy_status = f"error - {str(e)[:100]}"
+    return {
+        "status": "ok",
+        "proxy": proxy_status,
+        "proxy_url": MIS_PROXY,
+        "time": datetime.now().isoformat()
+    }
 
 
 if __name__ == "__main__":
