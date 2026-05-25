@@ -1,15 +1,23 @@
 """
 台股成交值 TOP30 後端 API Server
 
+架構：
+  Railway (後端) → Cloudflare Worker Proxy → mis.twse.com.tw
+  
+  Railway 的 IP 被 TWSE 封鎖，所以透過 Cloudflare Worker 當中繼。
+  Cloudflare 免費方案每日 10 萬次請求，足夠使用。
+
 資料來源：
-  - 即時成交值排行：全市場掃描 mis.twse.com.tw/stock/api/getStockInfo.jsp
-    欄位 v=累積成交量(股), z=現價, y=昨收, n=簡稱, c=代號
-    成交值(萬) = int(v) * float(z) / 10000
-  - 月營收：openapi.twse.com.tw/v1/opendata/t187ap05_L (JSON，永遠最新)
-  - 加權指數：mis.twse.com.tw/stock/data/mis_ohlc_TSE.txt
-  - 上市股票清單：openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL
+  - 即時成交值排行：mis.twse.com.tw/stock/api/getStockInfo.jsp
+    透過 Cloudflare Worker 代理
+    v = 累積成交量（張），z = 現價，y = 昨收
+    成交值(萬) = v(張) × z(元) × 1000股/張 ÷ 10000 = v × z ÷ 10
+  - 月營收：openapi.twse.com.tw/v1/opendata/t187ap05_L（直接呼叫，無封鎖問題）
+  - 加權指數：mis.twse.com.tw/stock/data/mis_ohlc_TSE.txt（透過 Proxy）
+  - 上市股票清單：openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL（直接呼叫）
 """
 
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -29,6 +37,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── 設定 ──────────────────────────────────────────────
+# Cloudflare Worker URL，部署後填入（可用環境變數覆蓋）
+MIS_PROXY = os.environ.get(
+    "MIS_PROXY",
+    "https://twse-proxy.YOUR_ACCOUNT.workers.dev"  # ← 換成你的 Worker 網址
+)
+
+OPENAPI_BASE = "https://openapi.twse.com.tw/v1"
+
 # ── 快取 ──────────────────────────────────────────────
 _cache: dict = {}
 _cache_time: Optional[datetime] = None
@@ -37,16 +54,15 @@ _revenue_cache_time: Optional[datetime] = None
 _codelist_cache: list = []
 _codelist_cache_time: Optional[datetime] = None
 
-CACHE_SECONDS        = 30
-REVENUE_CACHE_SECS   = 3600   # 月營收每小時更新一次
-CODELIST_CACHE_SECS  = 86400  # 股票清單每天更新一次
+CACHE_SECONDS       = 30
+REVENUE_CACHE_SECS  = 3600
+CODELIST_CACHE_SECS = 86400
 
 HISTORY_DIR = Path("./history")
 HISTORY_DIR.mkdir(exist_ok=True)
 
-HEADERS_MIS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Referer": "https://mis.twse.com.tw/",
+HEADERS_PROXY = {
+    "User-Agent": "Mozilla/5.0 (compatible; StockBot/1.0)",
 }
 HEADERS_API = {
     "User-Agent": "Mozilla/5.0 (compatible; StockBot/1.0)",
@@ -62,80 +78,113 @@ def is_market_open() -> bool:
     return (h == 9) or (9 < h < 13) or (h == 13 and m <= 30)
 
 
+def _parse_month(period_str: str) -> str:
+    s = period_str.strip()
+    if len(s) >= 2:
+        try:
+            n = int(s[-2:])
+            if 1 <= n <= 12:
+                return f"{n}月"
+        except ValueError:
+            pass
+    return ""
+
+
+def _parse_float(s: str) -> Optional[float]:
+    if not s or s in ("-", "--", "N/A", "不適用", ""):
+        return None
+    try:
+        return round(float(s), 2)
+    except ValueError:
+        return None
+
+
 # ── 取上市股票代號清單 ───────────────────────────────
 async def fetch_stock_codes() -> list[str]:
-    """
-    從 TWSE OpenAPI 取所有上市股票代號（排除 ETF/ETN：代號不為純4位數字）
-    """
     global _codelist_cache, _codelist_cache_time
     if _codelist_cache and _codelist_cache_time:
         if (datetime.now() - _codelist_cache_time).total_seconds() < CODELIST_CACHE_SECS:
             return _codelist_cache
 
-    url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+    url = f"{OPENAPI_BASE}/exchangeReport/STOCK_DAY_ALL"
     async with httpx.AsyncClient(timeout=20) as c:
         r = await c.get(url, headers=HEADERS_API)
         r.raise_for_status()
         rows = r.json()
 
-    codes = []
-    for row in rows:
-        code = str(row.get("Code", "")).strip()
-        # 只保留 4 位純數字（普通股）
-        if code.isdigit() and len(code) == 4:
-            codes.append(code)
-
+    # 只保留 4 位純數字普通股
+    codes = [
+        str(row.get("Code", "")).strip()
+        for row in rows
+        if str(row.get("Code", "")).strip().isdigit()
+        and len(str(row.get("Code", "")).strip()) == 4
+    ]
     _codelist_cache = codes
     _codelist_cache_time = datetime.now()
     return codes
 
 
+# ── 透過 Cloudflare Worker Proxy 呼叫 TWSE ──────────
+async def proxy_get(path_and_query: str) -> Optional[str]:
+    """
+    透過 Cloudflare Worker Proxy 呼叫 mis.twse.com.tw
+    path_and_query 例如：/stock/api/getStockInfo.jsp?ex_ch=tse_2330.tw&json=1&delay=0
+    """
+    url = MIS_PROXY.rstrip("/") + path_and_query
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.get(url, headers=HEADERS_PROXY)
+        if r.status_code == 200:
+            return r.text
+    return None
+
+
 # ── 即時全市場掃描（成交值排行）────────────────────────
 async def fetch_intraday_top30() -> list[dict]:
     """
-    分批呼叫 getStockInfo.jsp，計算每支股票累積成交值，取 TOP30。
-    欄位：c=代號, n=簡稱, z=現價, y=昨收, v=累積成交量(股)
-    成交值(萬) = int(v) * float(z) / 10000
+    分批呼叫 getStockInfo.jsp（透過 Cloudflare Worker），
+    計算 v(張) × z(元) ÷ 10 = 成交值(萬)，取 TOP30。
     """
     codes = await fetch_stock_codes()
 
     BATCH = 100
+    tasks = []
+    batch_list = []
+    for i in range(0, len(codes), BATCH):
+        batch = codes[i:i + BATCH]
+        batch_list.append(batch)
+        ex_ch = "|".join(f"tse_{c}.tw" for c in batch)
+        ts = int(datetime.now().timestamp() * 1000)
+        path = f"/stock/api/getStockInfo.jsp?ex_ch={ex_ch}&json=1&delay=0&_={ts}"
+        tasks.append(proxy_get(path))
+
+    responses = await asyncio.gather(*tasks, return_exceptions=True)
+
     results = []
-    async with httpx.AsyncClient(timeout=20) as client:
-        tasks = []
-        for i in range(0, len(codes), BATCH):
-            batch = codes[i:i+BATCH]
-            ex_ch = "|".join(f"tse_{c}.tw" for c in batch)
-            url = (f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
-                   f"?ex_ch={ex_ch}&json=1&delay=0"
-                   f"&_={int(datetime.now().timestamp()*1000)}")
-            tasks.append(client.get(url, headers=HEADERS_MIS))
-
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
-
     for resp in responses:
-        if isinstance(resp, Exception):
+        if isinstance(resp, Exception) or resp is None:
             continue
         try:
-            data = resp.json()
+            data = json.loads(resp)
         except Exception:
             continue
+
         for item in data.get("msgArray", []):
             try:
                 code = item.get("c", "").strip()
                 name = item.get("n", "").strip()
                 z    = item.get("z", "-")   # 現價
                 y    = item.get("y", "-")   # 昨收
-                v    = item.get("v", "-")   # 累積成交量（股）
+                v    = item.get("v", "-")   # 累積成交量（張）
 
                 if z in ("-", "--", "") or v in ("-", "--", ""):
                     continue
 
-                price      = float(z)
-                yesterday  = float(y) if y not in ("-", "--", "") else price
-                volume_lots = int(float(v))  # 張（1張=1000股）
-                # 成交值(萬) = 張數 × 每股價格 × 1000股 ÷ 10000 = 張數 × 價格 ÷ 10
-                amount_wan = int(volume_lots * price / 10)
+                price     = float(z)
+                yesterday = float(y) if y not in ("-", "--", "") else price
+                vol_lots  = int(float(v))   # 張
+
+                # 成交值(萬) = 張 × 元/股 × 1000股/張 ÷ 10000 = v × z ÷ 10
+                amount_wan = int(vol_lots * price / 10)
 
                 if amount_wan <= 0:
                     continue
@@ -158,20 +207,16 @@ async def fetch_intraday_top30() -> list[dict]:
     return results[:30]
 
 
-# ── 月營收（TWSE OpenAPI JSON，永遠最新）──────────────
+# ── 月營收 ────────────────────────────────────────────
 async def fetch_monthly_revenue() -> dict:
-    """
-    欄位（t187ap05_L JSON 版）：
-      公司代號, 資料年月(11502→2月), 營業收入_去年同月增減, 備註
-    注意：JSON 欄位用底線，不同於 CSV 的減號。
-    先試 JSON；若失敗改抓 mopsfin CSV。
-    """
     global _revenue_cache, _revenue_cache_time
     if _revenue_cache and _revenue_cache_time:
         if (datetime.now() - _revenue_cache_time).total_seconds() < REVENUE_CACHE_SECS:
             return _revenue_cache
 
+    # 先試 TWSE OpenAPI JSON
     result = await _fetch_revenue_json()
+    # Fallback: mopsfin CSV
     if not result:
         result = await _fetch_revenue_csv()
 
@@ -182,9 +227,9 @@ async def fetch_monthly_revenue() -> dict:
 
 
 async def _fetch_revenue_json() -> dict:
-    url = "https://openapi.twse.com.tw/v1/opendata/t187ap05_L"
+    url = f"{OPENAPI_BASE}/opendata/t187ap05_L"
     try:
-        async with httpx.AsyncClient(timeout=20) as c:
+        async with httpx.AsyncClient(timeout=25) as c:
             r = await c.get(url, headers=HEADERS_API)
             r.raise_for_status()
             rows = r.json()
@@ -194,59 +239,15 @@ async def _fetch_revenue_json() -> dict:
             code       = str(row.get("公司代號", "")).strip()
             period_str = str(row.get("資料年月", "")).strip()
             note       = str(row.get("備註", "")).strip()
-
-            # JSON 欄位名：底線版本（從 Swagger 確認）
-            yoy_str = str(row.get("營業收入_去年同月增減", "")).strip()
-            # 備用欄位名（防止更新）
-            if not yoy_str or yoy_str in ("-", "--", ""):
-                yoy_str = str(row.get("去年同月增減(%)", "")).strip()
-
+            # JSON 欄位嘗試多種可能名稱
+            yoy_str = (str(row.get("營業收入_去年同月增減", "")).strip()
+                       or str(row.get("去年同月增減(%)", "")).strip())
             if not code:
                 continue
-
-            month_label = _parse_month(period_str)
-            yoy = _parse_float(yoy_str)
-            is_high = "歷史新高" in note or "歷史高" in note
-
-            result[code] = {
-                "revenueYoY":   yoy,
-                "revenueMonth": month_label,
-                "revenueIsHigh": is_high,
-                "period":       period_str,
-            }
-        return result
-    except Exception:
-        return {}
-
-
-async def _fetch_revenue_csv() -> dict:
-    """備用：從 mopsfin CSV 抓取"""
-    url = "https://mopsfin.twse.com.tw/opendata/t187ap05_L.csv"
-    headers = {**HEADERS_API, "Accept": "text/csv,*/*",
-               "Referer": "https://mopsfin.twse.com.tw/"}
-    try:
-        import csv, io
-        async with httpx.AsyncClient(timeout=25) as c:
-            r = await c.get(url, headers=headers)
-            r.raise_for_status()
-            text = r.text
-
-        reader = csv.DictReader(io.StringIO(text))
-        result = {}
-        for row in reader:
-            def clean(s): return s.strip().strip('"').strip() if s else ""
-            code       = clean(row.get("公司代號", ""))
-            period_str = clean(row.get("資料年月", ""))
-            note       = clean(row.get("備註", ""))
-            yoy_str    = clean(row.get("營業收入-去年同月增減(%)", ""))
-
-            if not code:
-                continue
-
             result[code] = {
                 "revenueYoY":    _parse_float(yoy_str),
                 "revenueMonth":  _parse_month(period_str),
-                "revenueIsHigh": "歷史新高" in note or "歷史高" in note,
+                "revenueIsHigh": "歷史新高" in note,
                 "period":        period_str,
             }
         return result
@@ -254,45 +255,53 @@ async def _fetch_revenue_csv() -> dict:
         return {}
 
 
-def _parse_month(period_str: str) -> str:
-    """'11502' → '2月'，'11412' → '12月'"""
-    s = period_str.strip()
-    if len(s) >= 2:
-        try:
-            month_num = int(s[-2:])
-            if 1 <= month_num <= 12:
-                return f"{month_num}月"
-        except ValueError:
-            pass
-    return ""
-
-
-def _parse_float(s: str) -> Optional[float]:
-    if not s or s in ("-", "--", "N/A", "不適用", ""):
-        return None
+async def _fetch_revenue_csv() -> dict:
+    url = "https://mopsfin.twse.com.tw/opendata/t187ap05_L.csv"
+    headers = {**HEADERS_API, "Accept": "text/csv,*/*",
+               "Referer": "https://mopsfin.twse.com.tw/"}
     try:
-        return round(float(s), 2)
-    except ValueError:
-        return None
+        import csv, io
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(url, headers=headers)
+            r.raise_for_status()
+
+        reader = csv.DictReader(io.StringIO(r.text))
+        result = {}
+        for row in reader:
+            def cl(s): return s.strip().strip('"').strip() if s else ""
+            code       = cl(row.get("公司代號", ""))
+            period_str = cl(row.get("資料年月", ""))
+            note       = cl(row.get("備註", ""))
+            yoy_str    = cl(row.get("營業收入-去年同月增減(%)", ""))
+            if not code:
+                continue
+            result[code] = {
+                "revenueYoY":    _parse_float(yoy_str),
+                "revenueMonth":  _parse_month(period_str),
+                "revenueIsHigh": "歷史新高" in note,
+                "period":        period_str,
+            }
+        return result
+    except Exception:
+        return {}
 
 
-# ── 加權指數 ─────────────────────────────────────────
+# ── 加權指數（透過 Proxy）───────────────────────────
 async def fetch_taiex() -> dict:
-    url = "https://mis.twse.com.tw/stock/data/mis_ohlc_TSE.txt"
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(url, headers=HEADERS_MIS)
-            parts = r.text.strip().split("|")
+    text = await proxy_get("/stock/data/mis_ohlc_TSE.txt")
+    if text:
+        try:
+            parts = text.strip().split("|")
             if len(parts) >= 6:
                 price = float(parts[2].replace(",", "")) if parts[2] else 0
                 diff  = float(parts[3].replace(",", "")) if parts[3] else 0
                 prev  = price - diff
                 pct   = round(diff / prev * 100, 2) if prev else 0
-                total = float(parts[5]) if parts[5] else 0  # 億
+                total = float(parts[5]) if parts[5] else 0
                 return {"price": round(price, 2), "changePct": pct,
                         "totalMarketAmount": round(total * 100, 0)}
-    except Exception:
-        pass
+        except Exception:
+            pass
     return {"price": 0, "changePct": 0, "totalMarketAmount": 0}
 
 
@@ -333,14 +342,9 @@ async def get_top30():
 
         for s in stocks:
             rev = revenue_map.get(s["code"])
-            if rev:
-                s["revenueYoY"]    = rev["revenueYoY"]
-                s["revenueMonth"]  = rev["revenueMonth"]
-                s["revenueIsHigh"] = rev["revenueIsHigh"]
-            else:
-                s["revenueYoY"]    = None
-                s["revenueMonth"]  = ""
-                s["revenueIsHigh"] = False
+            s["revenueYoY"]    = rev["revenueYoY"]    if rev else None
+            s["revenueMonth"]  = rev["revenueMonth"]  if rev else ""
+            s["revenueIsHigh"] = rev["revenueIsHigh"] if rev else False
 
         tw_now   = datetime.now()
         date_str = tw_now.strftime("%Y-%m-%d")
@@ -355,7 +359,7 @@ async def get_top30():
 
         response = {
             "success":           True,
-            "source":            "mis.twse.com.tw getStockInfo",
+            "source":            "mis.twse.com.tw via Cloudflare Worker",
             "updateTime":        time_str,
             "isMarketOpen":      is_market_open(),
             "stocks":            stocks,
@@ -363,7 +367,6 @@ async def get_top30():
                                   "changePct": taiex_data["changePct"]},
             "totalMarketAmount": taiex_data.get("totalMarketAmount", 0),
         }
-
         _cache      = response
         _cache_time = datetime.now()
         return JSONResponse(response)
@@ -374,8 +377,8 @@ async def get_top30():
 
 @app.get("/api/history")
 async def get_history(days: int = 30):
-    data = load_history(days)
-    return JSONResponse({"success": True, "count": len(data), "history": data})
+    return JSONResponse({"success": True, "count": len(load_history(days)),
+                         "history": load_history(days)})
 
 
 @app.get("/api/history/{date_str}")
@@ -384,8 +387,7 @@ async def get_history_date(date_str: str):
     if not path.exists():
         return JSONResponse({"success": False, "error": "查無此日期"}, status_code=404)
     with open(path, encoding="utf-8") as f:
-        data = json.load(f)
-    return JSONResponse({"success": True, **data})
+        return JSONResponse({"success": True, **json.load(f)})
 
 
 @app.get("/api/analysis")
@@ -416,7 +418,9 @@ async def get_analysis(days: int = 30):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "time": datetime.now().isoformat()}
+    proxy_ok = await proxy_get("/stock/data/mis_ohlc_TSE.txt")
+    return {"status": "ok", "proxy": "ok" if proxy_ok else "error",
+            "time": datetime.now().isoformat()}
 
 
 if __name__ == "__main__":
