@@ -114,26 +114,61 @@ def _is_today_tw(date_str: str) -> bool:
     return date_str.strip() == expected
 
 
-async def fetch_mi_index_top30() -> list[dict]:
+async def _fetch_mi_index_raw() -> Optional[str]:
     """
-    從 MI_INDEX（type=ALLBUT0999）取今日成交資料，透過 Cloudflare Worker。
-    這是收盤後最準確的資料來源，當日資料即時更新。
-    欄位（data9）：
-      [0]代號 [1]名稱 [2]成交股數 [3]成交筆數 [4]成交金額
-      [8]收盤價 [9]漲跌符號 [10]漲跌價差
+    取 MI_INDEX 原始資料，同時嘗試直接連線和 Cloudflare Worker 兩種方式。
     """
     ts = int(datetime.now().timestamp() * 1000)
-    path = f"/exchangeReport/MI_INDEX?response=json&type=ALLBUT0999&_={ts}"
-    raw = await proxy_get(path)
+    mi_url_direct = f"https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&type=ALLBUT0999&_={ts}"
+    mi_path_proxy = f"/exchangeReport/MI_INDEX?response=json&type=ALLBUT0999&_={ts}"
+
+    headers_twse = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://www.twse.com.tw/zh/trading/exchange/MI_INDEX.html",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept-Language": "zh-TW,zh;q=0.9",
+    }
+
+    # 方法1：Railway 直接打 www.twse.com.tw
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(mi_url_direct, headers=headers_twse)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("stat") == "OK":
+                    return r.text
+    except Exception:
+        pass
+
+    # 方法2：透過 Cloudflare Worker
+    raw = await proxy_get(mi_path_proxy)
+    if raw:
+        try:
+            data = json.loads(raw)
+            if data.get("stat") == "OK":
+                return raw
+        except Exception:
+            pass
+
+    return None
+
+
+async def fetch_mi_index_top30() -> list[dict]:
+    """
+    從 MI_INDEX（type=ALLBUT0999）取今日成交資料。
+    優先直接連線，失敗再用 Cloudflare Worker。
+    欄位（data9）：
+      [0]代號 [1]名稱 [2]成交股數 [3]成交筆數 [4]成交金額（元）
+      [8]收盤價 [9]漲跌符號(HTML) [10]漲跌價差
+    """
+    raw = await _fetch_mi_index_raw()
     if not raw:
         return []
 
     try:
         data = json.loads(raw)
     except Exception:
-        return []
-
-    if data.get("stat") != "OK":
         return []
 
     rows = data.get("data9", [])
@@ -621,24 +656,41 @@ async def debug():
         high_debug["error"] = str(e)
 
 
-    # 3. MI_INDEX 測試（透過 Cloudflare Worker）
-    mi_debug = []
+
+    # 3. MI_INDEX 測試（直接連線 + Cloudflare Worker）
+    mi_debug = {}
     try:
         ts = int(datetime.now().timestamp() * 1000)
-        mi_raw = await proxy_get(f"/exchangeReport/MI_INDEX?response=json&type=ALLBUT0999&_={ts}")
-        if mi_raw:
-            mi_data = json.loads(mi_raw)
-            mi_debug = {
-                "stat": mi_data.get("stat"),
-                "date": mi_data.get("date"),
-                "data9_count": len(mi_data.get("data9", [])),
-                "fields9": mi_data.get("fields9"),
-                "first3_rows": mi_data.get("data9", [])[:3],
-            }
+        # 直接連線測試
+        mi_url = f"https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&type=ALLBUT0999&_={ts}"
+        headers_twse = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
+            "Referer": "https://www.twse.com.tw/zh/trading/exchange/MI_INDEX.html",
+            "Accept": "application/json, */*",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r_direct = await c.get(mi_url, headers=headers_twse)
+        mi_debug["direct_status"] = r_direct.status_code
+        if r_direct.status_code == 200:
+            d = r_direct.json()
+            mi_debug["direct_stat"] = d.get("stat")
+            mi_debug["direct_date"] = d.get("date")
+            mi_debug["direct_data9_count"] = len(d.get("data9", []))
+            mi_debug["direct_top3"] = d.get("data9", [])[:3]
         else:
-            mi_debug = {"error": "proxy returned None"}
+            mi_debug["direct_body"] = r_direct.text[:200]
+        # Worker 測試
+        mi_path = f"/exchangeReport/MI_INDEX?response=json&type=ALLBUT0999&_={ts}"
+        mi_raw = await proxy_get(mi_path)
+        if mi_raw:
+            mw = json.loads(mi_raw)
+            mi_debug["worker_stat"] = mw.get("stat")
+            mi_debug["worker_data9_count"] = len(mw.get("data9",[]))
+        else:
+            mi_debug["worker_stat"] = "no response"
     except Exception as e:
-        mi_debug = {"error": str(e)}
+        mi_debug["error"] = str(e)
 
     # 4. STOCK_DAY_ALL 前5名 + 日期驗證
     day_all_debug = []
