@@ -920,7 +920,7 @@ function renderTable() {
         <th></th>
         <th>現價</th>
         <th>漲跌%</th>
-        <th>成交值（萬）</th>
+        <th>成交值（億）</th>
         <th>月營收年增率</th>
       </tr>
     </thead>
@@ -995,7 +995,7 @@ function renderTable() {
       <td class="change-cell ${cls}"><span style="${limitStyle}">${sign}${pct.toFixed(2)}%</span></td>
       <td>
         <div class="vol-bar-wrap">
-          <span>${(s.amount).toLocaleString()}</span>
+          <span>${(s.amount/10000).toFixed(2)}億</span>
           <div class="vol-bar"><div class="vol-bar-fill" style="width:${barW}%"></div></div>
         </div>
       </td>
@@ -1121,7 +1121,7 @@ function showHistoryDetail(idx) {
     <div class="ranking-table-wrap">
       <table>
         <thead><tr>
-          <th>名次</th><th>股票</th><th></th><th>漲跌%</th><th>成交值（萬）</th>
+          <th>名次</th><th>股票</th><th></th><th>漲跌%</th><th>成交值（億）</th>
         </tr></thead>
         <tbody>`;
 
@@ -1138,7 +1138,7 @@ function showHistoryDetail(idx) {
         </div>
       </td>
       <td class="change-cell ${cls}">${sign}${pct.toFixed(2)}%</td>
-      <td class="amount-cell">${s.amount.toLocaleString()}</td>
+      <td class="amount-cell">${(s.amount/10000).toFixed(2)}億</td>
     </tr>`;
   });
 
