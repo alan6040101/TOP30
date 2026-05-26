@@ -546,14 +546,15 @@ async def get_top30():
         if (datetime.now() - _cache_time).total_seconds() < CACHE_SECONDS:
             return JSONResponse(_cache)
     try:
-        # 盤中用 getStockInfo，收盤後用 STOCK_DAY_ALL
+        # 盤中和收盤後都用 MI_INDEX（最準確），fallback 到 getStockInfo
         if is_market_open():
-            stocks_task = fetch_intraday_top30()
+            mi_stocks = await fetch_mi_index_top30()
+            stocks = mi_stocks if mi_stocks else await fetch_intraday_top30()
         else:
-            stocks_task = fetch_closing_top30()
+            stocks = await fetch_closing_top30()
 
-        stocks, taiex_data, revenue_map = await asyncio.gather(
-            stocks_task, fetch_taiex(), fetch_monthly_revenue(),
+        taiex_data, revenue_map = await asyncio.gather(
+            fetch_taiex(), fetch_monthly_revenue(),
         )
 
         for s in stocks:
